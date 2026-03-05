@@ -96,6 +96,7 @@ st.markdown(f"""<style>
     .stTabs [data-baseweb="tab"] {{ color: {MUTED} !important; }}
     .stTabs [aria-selected="true"] {{ color: {TEXT} !important; }}
     .stRadio label, .stSelectbox label, .stSlider label, .stCheckbox label {{ color: {TEXT} !important; }}
+    .stSidebar details summary span {{ white-space: pre-line !important; }}
 </style>""", unsafe_allow_html=True)
 
 def fmt(v):
@@ -1146,6 +1147,19 @@ with st.sidebar.expander(f"🧩 Asset Management\n{_consol_label}", expanded=Fal
 scenario = st.session_state["consol_scenario"]
 consol_scale = st.session_state["consol_pct_global"] / 100
 
+# ── AI Work Modernization ──
+if "ai_scenario" not in st.session_state:
+    st.session_state["ai_scenario"] = "Moderate"
+AI_SCENARIO_SCALE = {"Conservative": 0.50, "Moderate": 0.75, "Aggressive": 1.0}
+_ai_label = st.session_state["ai_scenario"]
+with st.sidebar.expander(f"🤖 Work Modernization\n{_ai_label}", expanded=False):
+    st.radio("Adoption Scenario", ["Conservative", "Moderate", "Aggressive"],
+        index=1,
+        captions=["50% of AI reduction potential", "75% of AI reduction potential", "100% of AI reduction potential"],
+        key="ai_scenario")
+ai_scenario = st.session_state["ai_scenario"]
+ai_scale = AI_SCENARIO_SCALE[ai_scenario]
+
 # ── Vendor Incentives ──
 if "vi_scenario" not in st.session_state:
     st.session_state["vi_scenario"] = "Aggressive"
@@ -1173,43 +1187,21 @@ with st.sidebar.expander(f"💳 Payment Management\n{_pm_label}", expanded=False
 pm_scenario = st.session_state["pm_scenario"]
 pm_rate = PM_SCENARIOS[pm_scenario]
 
-# ── Early Payment ──
+# ── Early Pay ──
 if "ep_preset" not in st.session_state:
-    st.session_state["ep_preset"] = list(EARLY_PAY_PRESETS.keys())[0]
+    st.session_state["ep_preset"] = "Aggressive"
 if "ep_fine_tune" not in st.session_state:
     st.session_state["ep_fine_tune"] = 0
 _ep_label = st.session_state["ep_preset"]
-with st.sidebar.expander(f"💰 Early Payment\n{_ep_label}", expanded=False):
+with st.sidebar.expander(f"💰 Early Pay\n{_ep_label}", expanded=False):
     st.radio("Strategy", list(EARLY_PAY_PRESETS.keys()),
         captions=[v["desc"] for v in EARLY_PAY_PRESETS.values()],
         key="ep_preset")
     st.slider("Fine-tune adjustment", -50, 50, 0, 5,
         help="Shift all early pay rates up or down from preset",
         key="ep_fine_tune")
-    st.markdown("---")
-    st.markdown("**ℹ️ Preset details**")
-    for name, p in EARLY_PAY_PRESETS.items():
-        marker = "▶" if name == st.session_state["ep_preset"] else "  "
-        st.markdown(f"**{marker} {name}** — {p['desc']}")
-        st.markdown(f"Discount: L={p['disc']['Large']}% · M={p['disc']['Mid-Size']}% · S={p['disc']['Small']}%")
-        st.markdown(f"Acceptance: L={p['accept']['Large']}% · M={p['accept']['Mid-Size']}% · S={p['accept']['Small']}%")
-        st.markdown(f"Cost of Capital: {p['coc']}% · Days early: 20")
-        st.markdown("---")
 ep_preset = st.session_state["ep_preset"]
 ep_fine_tune = st.session_state["ep_fine_tune"]
-
-# ── AI Work Modernization ──
-if "ai_scenario" not in st.session_state:
-    st.session_state["ai_scenario"] = "Moderate"
-AI_SCENARIO_SCALE = {"Conservative": 0.50, "Moderate": 0.75, "Aggressive": 1.0}
-_ai_label = st.session_state["ai_scenario"]
-with st.sidebar.expander(f"🤖 Work Modernization\n{_ai_label}", expanded=False):
-    st.radio("Adoption Scenario", ["Conservative", "Moderate", "Aggressive"],
-        index=1,
-        captions=["50% of AI reduction potential", "75% of AI reduction potential", "100% of AI reduction potential"],
-        key="ai_scenario")
-ai_scenario = st.session_state["ai_scenario"]
-ai_scale = AI_SCENARIO_SCALE[ai_scenario]
 
 # ══════════════════════════
 # COMPUTE
@@ -1225,6 +1217,8 @@ portfolio_total = df["Initial_Cost"].sum() + annual_costs
 vendor_summary, ep_yearly, ep_gross, ep_coc, ep_net, ep_rates = compute_early_pay(df, ep_preset, ep_fine_tune)
 inc_by_year_raw = compute_incentive_savings_by_year(df, vi_scenario)
 mkt_repricing_by_year = compute_market_repricing_by_year(df, app_bench, infra_bench)
+if not mkt_repricing_by_year.empty and "mkt_opp" in mkt_repricing_by_year.columns:
+    mkt_repricing_by_year["mkt_opp"] = mkt_repricing_by_year["mkt_opp"] * 0.3
 ai_gap_by_year = compute_ai_gap_by_year(df, alloc, infra_alloc, ai_reduction_app, ai_reduction_infra, ai_scale)
 
 # Budget variance
@@ -1509,7 +1503,7 @@ if "vi_internal" not in vi_by_year.columns:
     vi_by_year["vi_internal"] = 0.0
 if "mkt_opp" not in vi_by_year.columns:
     vi_by_year["mkt_opp"] = 0.0
-vi_by_year["vi_savings"] = vi_by_year[["vi_internal", "mkt_opp"]].max(axis=1)
+vi_by_year["vi_savings"] = vi_by_year["vi_internal"] + vi_by_year["mkt_opp"]
 spend_comp = spend_comp.merge(vi_by_year[["year", "vi_savings"]], on="year", how="left")
 spend_comp["vi_savings"] = spend_comp["vi_savings"].fillna(0)
 
@@ -1557,7 +1551,7 @@ spend_comp["optimized"] = (spend_comp["total"] - spend_comp.apply(optimized_ramp
 # ══════════════════════════
 tab_perf, tab_pred, tab_presc, tab_totalsav, tab_effcomp, tab_others = st.tabs([
     "🏆 Performance", "🔮 Prediction", "💊 Prescription",
-    "🎯 Efficiency Opportunities", "🔧 Efficiency Components", "📁 Others (Temp)"])
+    "🎯 Efficiency Opportunities", "🔧 Efficiency Components (Temp)", "📁 Others (Temp)"])
 
 with tab_presc:
     if not presc_categories:
@@ -1848,7 +1842,7 @@ with tab_totalsav:
         fig_comp.add_vline(x=LAST_HIST_YEAR, line_dash="dash", line_color=MUTED,
             annotation_text="Projected →", annotation_font_color=MUTED, annotation_font_size=10)
     dark_layout(fig_comp, 420)
-    fig_comp.update_layout(yaxis_title="Annual Spend")
+    fig_comp.update_layout(yaxis_title="Annual Spend", yaxis_rangemode="tozero")
     st.plotly_chart(fig_comp, use_container_width=True)
     st.caption("Yellow fill = optimized opportunity (3yr ramp) · Green fill = additional optimal opportunity")
 
@@ -1856,7 +1850,7 @@ with tab_totalsav:
 
     # Year-by-year gaps breakdown (stacked bar)
     st.subheader("Year-by-Year Opportunities Breakdown")
-    st.caption("Asset Management = eliminated component costs · Work Modernization = work modernization potential · Vendor Incentives = max(negotiation + prevented increase, market repricing) · Payment Management = payment process optimization · Early Pay = gross discount − cost of cash")
+    st.caption("Asset Management = eliminated component costs · Work Modernization = work modernization potential · Vendor Incentives = negotiation + prevented increase + market repricing · Payment Management = payment process optimization · Early Pay = gross discount − cost of cash")
 
     gap_years = spend_comp[spend_comp["year"] >= 2020].copy()
     gap_years["Asset Management"] = gap_years["savings"]
@@ -1950,7 +1944,7 @@ with tab_totalsav:
             stdf["Opportunity"] = stdf["Opportunity"].apply(fmt)
             st.dataframe(stdf, use_container_width=True, hide_index=True)
             if mkt_total_opp > 0:
-                st.caption("Note: Vendor Incentives in optimal/optimized uses max(negotiation + prevented, market repricing) per year to avoid double-counting.")
+                st.caption("Note: Vendor Incentives = negotiation + prevented increase + market repricing (additive).")
         else:
             st.info("No opportunity data available.")
 
@@ -2553,7 +2547,7 @@ with tab_benchmarks:
 with tab_effcomp:
   tab_asset, tab_aimod, tab_incentives, tab_paymgmt, tab_epay, tab_bench_opp = st.tabs([
       "🏗️ Asset Management", "🤖 Work Modernization",
-      "🏷️ Vendor Incentives", "💳 Payment Management", "💰 Early Payment",
+      "🏷️ Vendor Incentives", "💳 Payment Management", "💰 Early Pay",
       "📊 Vendor Incentives (Benchmarks)"])
 
   # ── Asset Management ──
@@ -2746,7 +2740,7 @@ with tab_effcomp:
       st.info("Payment management content coming soon.")
 
   # ════════════════════════
-  # ── Early Payment ──
+  # ── Early Pay ──
   # ════════════════════════
   with tab_epay:
       if len(vendor_summary)>0:
@@ -3571,7 +3565,7 @@ with tab_bizcase:
                             st.dataframe(pd.DataFrame(ct_rows), use_container_width=True, hide_index=True)
 
                     elif ot_key == "ep":
-                        st.markdown("#### Early Payment Discount")
+                        st.markdown("#### Early Pay Discount")
                         if asset_row["EP_Gap"] > 0:
                             size = info.get("Estimated_Size", "")
                             p = EARLY_PAY_PRESETS[ep_preset]
