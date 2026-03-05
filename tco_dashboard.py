@@ -118,6 +118,33 @@ def dark_layout(fig, height=380):
         yaxis=dict(gridcolor=BORDER, showline=False, tickfont=dict(color=MUTED)))
     return fig
 
+def plot_isolated_trend(spend_df, gap_col, last_hist, show_proj):
+    """Line chart: Current Trend vs Optimized (3yr ramp) vs Optimal for a single gap."""
+    pdf = spend_df[spend_df["year"] >= 2020].copy()
+    pdf["_optimal"] = (pdf["total"] - pdf[gap_col]).clip(lower=0)
+    def _ramp(row):
+        if row["year"] <= last_hist: return 0
+        offset = row["year"] - last_hist
+        if offset == 1: return row[gap_col] * 0.33
+        elif offset == 2: return row[gap_col] * 0.66
+        else: return row[gap_col]
+    pdf["_optimized"] = (pdf["total"] - pdf.apply(_ramp, axis=1)).clip(lower=0)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=pdf["year"], y=pdf["total"], name="Current Trend",
+        line=dict(color="#ef4444", width=2.5), mode="lines"))
+    fig.add_trace(go.Scatter(x=pdf["year"], y=pdf["_optimized"], name="Optimized",
+        line=dict(color="#eab308", width=2.5, dash="dash"), mode="lines",
+        fill="tonexty", fillcolor="rgba(234,179,8,0.10)"))
+    fig.add_trace(go.Scatter(x=pdf["year"], y=pdf["_optimal"], name="Optimal",
+        line=dict(color="#22c55e", width=2), mode="lines",
+        fill="tonexty", fillcolor="rgba(34,197,94,0.10)"))
+    if show_proj:
+        fig.add_vline(x=last_hist, line_dash="dash", line_color=MUTED,
+            annotation_text="Projected →", annotation_font_color=MUTED, annotation_font_size=10)
+    dark_layout(fig, 380)
+    fig.update_layout(yaxis_title="Annual Spend")
+    return fig
+
 
 _CARD_ICONS = [
     "&#128295;", "&#128202;", "&#128176;", "&#128640;", "&#9889;", "&#128161;",
@@ -128,7 +155,7 @@ _CARD_ICONS = [
 _SEG_ICONS = {
     "Budget": "&#128181;", "Vendor": "&#129309;", "Risk": "&#128737;",
     "Component": "&#128300;", "Categorization": "&#128194;",
-    "Retrun Analytics": "&#128200;", "Investment Analytics": "&#128176;", "Risk Analytics": "&#128737;",
+    "Return Analytics": "&#128200;", "Investment Analytics": "&#128176;", "Risk Analytics": "&#128737;",
     "Financial Optimization": "&#128181;", "Work Modernization": "&#9889;", "Risk Mitigation": "&#128737;",
 }
 
@@ -176,8 +203,14 @@ def _alpha_cards_html(categories, alpha_label, score_range_lo, score_range_hi, c
             rep = r.get("alpha_rep", "")
             rep_html = f"<span style='color:{MUTED}; font-size:10px;'> ({rep})</span>" if rep else ""
             alpha_val = r.get("alpha", "")
+            _sources = r.get('sources', '')
+            _src_span = ''
+            if _sources:
+                _src_links = [s.strip() for s in _sources.split('|') if s.strip()]
+                if _src_links:
+                    _src_span = ' ' + ' '.join(f'<a href="{s}" target="_blank" style="color:#60a5fa; text-decoration:none; font-size:12px;" title="{s}">&#128279;</a>' for s in _src_links)
             alpha_kpi_html = (f"<div style='font-size:11px; color:#0284c7; font-weight:600; "
-                              f"margin-top:2px;'>Alpha KPI: {alpha_val}</div>") if alpha_val else ""
+                              f"margin-top:2px;'>Alpha KPI: {alpha_val}{_src_span}</div>") if alpha_val else (_src_span if _src_span else "")
             kpi_cards += (
                 f"<div style='background:{CARD_BG}; border:1px solid {BORDER}; border-radius:10px; "
                 f"padding:16px 18px; display:flex; flex-direction:column; gap:6px; min-width:0;'>"
@@ -342,8 +375,18 @@ def _render_roadmap(categories, tier_scores, cat_labels=None):
                          f"padding:1px 8px; border-radius:8px; margin-left:8px;'>Achieved</span>") if achieved else ""
                 scenario_html = (f"<div style='font-size:11px; color:{MUTED}; line-height:1.4; margin-top:4px;'>"
                                  f"<b>Scenario:</b> {scenario}</div>") if scenario else ""
-                practice_html = (f"<div style='font-size:11px; color:{MUTED}; line-height:1.4; margin-top:2px;'>"
-                                 f"<b>Differentiator:</b> {practice}</div>") if practice else ""
+                practice_html = ''
+                _src = td.get("sources", "")
+                _src_span = ''
+                if _src:
+                    _src_links = [s.strip() for s in _src.split("|") if s.strip()]
+                    if _src_links:
+                        _src_span = ' ' + ' '.join(f'<a href="{s}" target="_blank" style="color:#60a5fa; text-decoration:none; font-size:12px;" title="{s}">&#128279;</a>' for s in _src_links)
+                if practice:
+                    practice_html = (f"<div style='font-size:11px; color:{MUTED}; line-height:1.4; margin-top:2px;'>"
+                                     f"<b>Differentiator:</b> {practice}{_src_span}</div>")
+                elif _src_span:
+                    practice_html = f"<div style='margin-top:2px;'>{_src_span.strip()}</div>"
                 gap_html = (f"  <span style='color:{MUTED}; font-size:11px;'>(+{gap})</span>"
                             if gap > 0 else "")
 
@@ -634,6 +677,19 @@ def load_prescription_benchmarks(file_path="Prescription_Benchmarks.xlsx"):
     except Exception:
         return {}
 
+
+@st.cache_data
+def load_payment_data(file_path="Payment_data.xlsx"):
+    bp = Path(file_path)
+    if not bp.exists():
+        return pd.DataFrame(), pd.DataFrame()
+    try:
+        sheets = pd.read_excel(bp, sheet_name=None)
+        shares = sheets.get("Shares", pd.DataFrame())
+        kpis = sheets.get("KPIs", pd.DataFrame())
+        return shares, kpis
+    except Exception:
+        return pd.DataFrame(), pd.DataFrame()
 
 APP_WORKTYPES = {"Collaboration", "Workflow", "Analysis", "Transaction", "External Facing"}
 INFRA_WORKTYPES = {"Access", "Communications", "Integration", "Data"}
@@ -1223,6 +1279,7 @@ ai_gap_by_year = compute_ai_gap_by_year(df, alloc, infra_alloc, ai_reduction_app
 
 # Budget variance
 budget_df = load_budget()
+pm_shares, pm_kpis = load_payment_data()
 if not budget_df.empty:
     actual_agg = ydf.groupby(["year", "department", "layer", "worktype"])[["initCost", "runCost", "devCost"]].sum().reset_index()
     actual_agg["actual_total"] = actual_agg[["initCost", "runCost", "devCost"]].sum(axis=1)
@@ -1425,6 +1482,7 @@ def parse_benchmark_sheets(bench_sheets):
                     r0 = t_row.iloc[0]
                     td["scenario_desc"] = _get_str_col(r0, "Scenario Description")
                     td["practice_diff"] = _get_str_col(r0, "Practice Differentiator")
+                    td["sources"] = _get_str_col(r0, "Sources")
                     mv = _mid(tk)
                     td["score"] = round(_perf_score(mv, best_extreme, worst_extreme, lower_better), 1) if mv is not None else None
                 tier_data[tk] = td
@@ -1434,7 +1492,7 @@ def parse_benchmark_sheets(bench_sheets):
                 "org_fmt": fmt_fn(org_val),
                 "score": round(score, 1), "alpha": alpha_str,
                 "alpha_score": alpha_score_val, "scenario_desc": scenario_desc,
-                "alpha_rep": alpha_sample, "tier_data": tier_data,
+                "alpha_rep": alpha_sample, "sources": tier_data.get("alpha", {}).get("sources", ""), "tier_data": tier_data,
             })
 
         if sheet_rows:
@@ -2555,6 +2613,13 @@ with tab_effcomp:
     tab_rat, tab_comp = st.tabs(["✂️ Rationalization", "🧩 Components"])
 
     with tab_rat:
+      st.markdown(f"<div style='font-size:13px; color:{MUTED}; margin-bottom:16px;'>"  # noqa
+          "Consolidation of redundant application and infrastructure components. "
+          "Common components are reduced to one per worktype, shared components are consolidated "
+          "based on scenario aggressiveness, and specialized components are retained. "
+          "Opportunities represent eliminated component costs."
+          "</div>", unsafe_allow_html=True)
+
       rat_layer = st.radio("Layer", ["Applications", "Infrastructure"], horizontal=True, key="rat_layer")
 
       if rat_layer == "Applications":
@@ -2568,10 +2633,18 @@ with tab_effcomp:
       rat_sav_by_year = compute_savings_by_year(df, rat_alloc, scenario)
 
       scaled_rat_consol = rat_consol * consol_scale
-      c1,c2,c3 = st.columns(3)
-      c1.metric(f"{rat_label} Asset Management Opportunity", fmt(scaled_rat_consol), f"{scaled_rat_consol/portfolio_total*100:.1f}% of portfolio")
-      c2.metric("Early Pay Opportunity", fmt(ep_net), ep_preset)
-      c3.metric("Combined Opportunity", fmt(scaled_rat_consol+ep_net), f"{(scaled_rat_consol+ep_net)/portfolio_total*100:.1f}% of portfolio")
+      c1, c2, c3, c4 = st.columns(4)
+      c1.metric("Total Opportunity", fmt(scaled_rat_consol))
+      c2.metric("% of Portfolio", f"{scaled_rat_consol/portfolio_total*100:.1f}%" if portfolio_total > 0 else "—")
+      c3.metric("Scenario", scenario)
+      c4.metric("Optimized Spend", fmt(portfolio_total - scaled_rat_consol))
+
+      st.markdown("---")
+
+      st.subheader("Spend Impact: Asset Management")
+      fig_am_trend = plot_isolated_trend(spend_comp, "savings", LAST_HIST_YEAR, show_proj)
+      st.plotly_chart(fig_am_trend, use_container_width=True)
+      st.caption("Current Trend = as-is spend. Optimized = 3yr ramp (33%/66%/100%) of consolidation opportunities. Optimal = full consolidation opportunities applied.")
 
       st.markdown("---")
       st.subheader(f"{rat_label} Asset Management")
@@ -2736,21 +2809,225 @@ with tab_effcomp:
   # ── Payment Management ──
   # ════════════════════════
   with tab_paymgmt:
-      st.subheader("Payment Management")
-      st.info("Payment management content coming soon.")
+      st.markdown(f"<div style='font-size:13px; color:{MUTED}; margin-bottom:16px;'>"  # noqa
+          "Optimization of the payment lifecycle across planning, processing, and monitoring. "
+          "Processing automation drives the majority of cost reduction. "
+          "Total payment cost is estimated at 5% of baseline portfolio spend, "
+          "distributed across structures by their cost share."
+          "</div>", unsafe_allow_html=True)
+
+      st.radio("Layer", ["Applications", "Infrastructure"], horizontal=True, key="pm_layer")
+
+
+      # Total payment cost = 5% of baseline
+      baseline_total = spend_comp["total"].sum()
+      pm_total_cost = baseline_total * 0.05
+
+      if pm_shares.empty or pm_kpis.empty:
+          st.warning("Place Payment_data.xlsx alongside the dashboard to enable Payment Management analysis.")
+      else:
+          pm_structures = pm_shares.copy()
+          pm_structures["Cost"] = pm_structures["Share"] * pm_total_cost
+
+          PM_KPI_SCENARIOS = {
+              "Cost per Payment / Invoice":   {"unit": "$",  "current": 6.50, "conservative": 5.50, "moderate": 4.00, "aggressive": 2.80, "lower_is_better": True},
+              "Payment Cycle Time":           {"unit": " days","current": 11,   "conservative": 9,    "moderate": 6,    "aggressive": 4,    "lower_is_better": True},
+              "On-Time Payment Rate":         {"unit": "%",  "current": 80,   "conservative": 87,   "moderate": 93,   "aggressive": 97,   "lower_is_better": False},
+              "Automation Rate (touchless processing)": {"unit": "%", "current": 40, "conservative": 55, "moderate": 75, "aggressive": 88, "lower_is_better": False},
+              "Payment Error Rate":           {"unit": "%",  "current": 3.0,  "conservative": 2.2,  "moderate": 1.2,  "aggressive": 0.6,  "lower_is_better": True},
+          }
+          for _, row in pm_kpis.iterrows():
+              kpi_name = row["KPI"]
+              if kpi_name in PM_KPI_SCENARIOS:
+                  PM_KPI_SCENARIOS[kpi_name]["current"] = row["Value"]
+
+          PM_REDUCTIONS = {
+              "Planning":    {"conservative": 0.10, "moderate": 0.25, "aggressive": 0.40},
+              "Processing":  {"conservative": 0.18, "moderate": 0.40, "aggressive": 0.60},
+              "Monitoring":  {"conservative": 0.15, "moderate": 0.35, "aggressive": 0.55},
+          }
+          STRUCTURE_MAP = {"Planing": "Planning", "Processing": "Processing", "Monitoring": "Monitoring"}
+
+          sc_key = pm_scenario.lower()
+          total_savings = 0
+          for _, srow in pm_structures.iterrows():
+              struct = STRUCTURE_MAP.get(srow["Structure"], srow["Structure"])
+              red = PM_REDUCTIONS.get(struct, {}).get(sc_key, 0)
+              total_savings += srow["Cost"] * red
+          savings_pct = total_savings / pm_total_cost * 100 if pm_total_cost > 0 else 0
+
+          mc1, mc2, mc3, mc4 = st.columns(4)
+          mc1.metric("Total Opportunity", fmt(total_savings))
+          mc2.metric("% of Portfolio", f"{total_savings/portfolio_total*100:.1f}%" if portfolio_total > 0 else "—")
+          mc3.metric("Scenario", pm_scenario)
+          mc4.metric("Optimized Spend", fmt(portfolio_total - total_savings))
+
+          st.markdown("---")
+
+          st.subheader("Spend Impact: Payment Management")
+          fig_pm_trend = plot_isolated_trend(spend_comp, "pm_savings", LAST_HIST_YEAR, show_proj)
+          st.plotly_chart(fig_pm_trend, use_container_width=True)
+          st.caption("Current Trend = as-is spend. Optimized = 3yr ramp of payment management opportunities. Optimal = full payment management opportunities applied.")
+
+          st.markdown("---")
+
+          st.subheader("Cost Breakdown by Structure")
+          breakdown_rows = []
+          for _, srow in pm_structures.iterrows():
+              struct = STRUCTURE_MAP.get(srow["Structure"], srow["Structure"])
+              current_cost = srow["Cost"]
+              red = PM_REDUCTIONS.get(struct, {}).get(sc_key, 0)
+              savings_val = current_cost * red
+              share_val = srow["Share"]
+              breakdown_rows.append({
+                  "Structure": struct,
+                  "Improvement": srow["Improvement"],
+                  "Share": f"{share_val:.0%}",
+                  "Current Cost": current_cost,
+                  "Reduction": f"{red:.0%}",
+                  "Savings": savings_val,
+                  "Optimized Cost": current_cost - savings_val,
+              })
+          bd_df = pd.DataFrame(breakdown_rows)
+
+          fig_bd = go.Figure()
+          fig_bd.add_trace(go.Bar(
+              y=bd_df["Structure"], x=bd_df["Optimized Cost"],
+              name="Optimized Cost", orientation="h",
+              marker_color="#2563eb", text=bd_df["Optimized Cost"].apply(fmt),
+              textposition="inside"))
+          fig_bd.add_trace(go.Bar(
+              y=bd_df["Structure"], x=bd_df["Savings"],
+              name="Savings (Gap)", orientation="h",
+              marker_color="#22c55e", text=bd_df["Savings"].apply(fmt),
+              textposition="inside"))
+          fig_bd.update_layout(barmode="stack")
+          dark_layout(fig_bd, height=250)
+          fig_bd.update_layout(
+              xaxis_title="Cost",
+              legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0))
+          st.plotly_chart(fig_bd, use_container_width=True)
+
+          bd_display = bd_df.copy()
+          bd_display["Current Cost"] = bd_display["Current Cost"].apply(fmt)
+          bd_display["Savings"] = bd_display["Savings"].apply(fmt)
+          bd_display["Optimized Cost"] = bd_display["Optimized Cost"].apply(fmt)
+          st.dataframe(bd_display, use_container_width=True, hide_index=True)
+
+          st.markdown("---")
+
+          st.subheader("KPI Impact Analysis")
+          kpi_rows = []
+          for kpi_name, kpi_info in PM_KPI_SCENARIOS.items():
+              current = kpi_info["current"]
+              target = kpi_info[sc_key]
+              unit = kpi_info["unit"]
+              lower = kpi_info["lower_is_better"]
+              if lower:
+                  improvement = (current - target) / current * 100 if current != 0 else 0
+              else:
+                  improvement = (target - current) / current * 100 if current != 0 else 0
+              kpi_rows.append({
+                  "KPI": kpi_name,
+                  "Current": f"{current}{unit}" if unit != "$" else f"${current}",
+                  "Target": f"{target}{unit}" if unit != "$" else f"${target}",
+                  "Improvement": f"{improvement:+.0f}%",
+              })
+          kpi_df = pd.DataFrame(kpi_rows)
+          st.dataframe(kpi_df, use_container_width=True, hide_index=True)
+
+          fig_kpi = go.Figure()
+          kpi_names = list(PM_KPI_SCENARIOS.keys())
+          current_vals = [PM_KPI_SCENARIOS[k]["current"] for k in kpi_names]
+          target_vals = [PM_KPI_SCENARIOS[k][sc_key] for k in kpi_names]
+          fig_kpi.add_trace(go.Bar(
+              y=kpi_names, x=current_vals, orientation="h",
+              marker_color="#ef4444", width=0.5, name="Current",
+              text=[f"{v}" for v in current_vals], textposition="outside"))
+          fig_kpi.add_trace(go.Bar(
+              y=kpi_names, x=target_vals, orientation="h",
+              marker_color="#22c55e", width=0.3, name=pm_scenario,
+              text=[f"{v}" for v in target_vals], textposition="outside"))
+          fig_kpi.update_layout(barmode="overlay")
+          dark_layout(fig_kpi, height=350)
+          fig_kpi.update_layout(
+              xaxis_title="Value",
+              legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0))
+          st.plotly_chart(fig_kpi, use_container_width=True)
+
+          st.markdown("---")
+
+          st.subheader("Scenario Comparison")
+          sc_rows = []
+          for sc_name in ["Conservative", "Moderate", "Aggressive"]:
+              sk = sc_name.lower()
+              sc_sav = 0
+              for _, srow in pm_structures.iterrows():
+                  struct = STRUCTURE_MAP.get(srow["Structure"], srow["Structure"])
+                  red = PM_REDUCTIONS.get(struct, {}).get(sk, 0)
+                  sc_sav += srow["Cost"] * red
+              cpi_key = "Cost per Payment / Invoice"
+              ar_key = "Automation Rate (touchless processing)"
+              sc_rows.append({
+                  "Scenario": sc_name,
+                  "Total Savings": sc_sav,
+                  "Savings %": f"{sc_sav / pm_total_cost * 100:.1f}%" if pm_total_cost > 0 else "0%",
+                  "Optimized Cost": pm_total_cost - sc_sav,
+                  "Cost / Payment": f"${PM_KPI_SCENARIOS[cpi_key][sk]}",
+                  "Automation Rate": f"{PM_KPI_SCENARIOS[ar_key][sk]}%",
+              })
+          sc_df = pd.DataFrame(sc_rows)
+
+          fig_sc = go.Figure()
+          fig_sc.add_trace(go.Bar(
+              x=sc_df["Scenario"], y=[pm_total_cost]*3,
+              name="Current Cost", marker_color="#ef4444",
+              text=[fmt(pm_total_cost)]*3, textposition="inside"))
+          fig_sc.add_trace(go.Bar(
+              x=sc_df["Scenario"], y=sc_df["Optimized Cost"],
+              name="Optimized Cost", marker_color="#2563eb",
+              text=sc_df["Optimized Cost"].apply(fmt), textposition="inside"))
+          fig_sc.add_trace(go.Bar(
+              x=sc_df["Scenario"], y=sc_df["Total Savings"],
+              name="Savings", marker_color="#22c55e",
+              text=sc_df["Total Savings"].apply(fmt), textposition="inside"))
+          fig_sc.update_layout(barmode="group")
+          dark_layout(fig_sc, height=350)
+          fig_sc.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0))
+          st.plotly_chart(fig_sc, use_container_width=True)
+
+          sc_display = sc_df.copy()
+          sc_display["Total Savings"] = sc_display["Total Savings"].apply(fmt)
+          sc_display["Optimized Cost"] = sc_display["Optimized Cost"].apply(fmt)
+          st.dataframe(sc_display, use_container_width=True, hide_index=True)
 
   # ════════════════════════
   # ── Early Pay ──
   # ════════════════════════
   with tab_epay:
+      st.markdown(f"<div style='font-size:13px; color:{MUTED}; margin-bottom:16px;'>"  # noqa
+          "Early payment discounts offered to vendors in exchange for accelerated payment terms. "
+          "The gross discount is offset by the cost of deploying cash early. "
+          "Net benefit = gross discount minus cost of cash, adjusted by vendor size and margin tier."
+          "</div>", unsafe_allow_html=True)
+
+      st.radio("Layer", ["Applications", "Infrastructure"], horizontal=True, key="ep_layer")
+
       if len(vendor_summary)>0:
           ext_total = vendor_summary["Total_Cost"].sum()
 
-          c1,c2,c3,c4 = st.columns(4)
-          c1.metric("Gross Discount", fmt(ep_gross), f"{ep_gross/ext_total*100:.1f}% of external" if ext_total>0 else "")
-          c2.metric("Cost of Cash", fmt(ep_coc), f"20 days early")
-          c3.metric("Net Benefit", fmt(ep_net), f"{ep_preset} + {ep_fine_tune:+d}% tune")
-          c4.metric("External Spend", fmt(ext_total), f"{vendor_summary['Assets'].sum()} assets")
+          c1, c2, c3, c4 = st.columns(4)
+          c1.metric("Total Opportunity", fmt(ep_net))
+          c2.metric("% of Portfolio", f"{ep_net/portfolio_total*100:.1f}%" if portfolio_total > 0 else "—")
+          c3.metric("Scenario", f"{ep_preset} ({ep_fine_tune:+d}% tune)")
+          c4.metric("Optimized Spend", fmt(portfolio_total - ep_net))
+
+          st.markdown("---")
+
+          st.subheader("Spend Impact: Early Pay")
+          fig_ep_trend = plot_isolated_trend(spend_comp, "ep_savings", LAST_HIST_YEAR, show_proj)
+          st.plotly_chart(fig_ep_trend, use_container_width=True)
+          st.caption("Current Trend = as-is spend. Optimized = 3yr ramp of early pay opportunities. Optimal = full early pay opportunities applied.")
 
           st.markdown("---")
 
@@ -2820,40 +3097,53 @@ with tab_effcomp:
   # ── Vendor Incentives ──
   # ════════════════════════
   with tab_incentives:
-      st.subheader("Vendor Incentives")
+      st.markdown(f"<div style='font-size:13px; color:{MUTED}; margin-bottom:16px;'>"  # noqa
+          "Margin-based vendor negotiation leveraging the difference between each vendor's "
+          "gross margin and the portfolio's Total Serviceable Market (TSM) average. "
+          "Vendors above TSM yield price negotiation rebates; all vendors contribute "
+          "prevented price increases based on their distance from TSM."
+          "</div>", unsafe_allow_html=True)
 
-      # ── A. Narrative Header ──
-      _reb = INCENTIVE_SCENARIOS[vi_scenario]
-      _prot = CHURN_SCENARIOS[vi_scenario]
-      st.markdown(f"""
-  **How this works:** Every vendor's gross margin is benchmarked against the portfolio's
-  **TSM (Total Serviceable Market) average** — the weighted mean margin per layer. Vendors
-  above the TSM have pricing *headroom* that translates into two negotiation levers:
-
-  | Lever | Mechanism | Tiers ({vi_scenario}) |
-  |-------|-----------|-------|
-  | **Price Negotiation** | Vendors above TSM have inflated pricing. The headroom gap = a negotiable rebate applied to total spend. | Low {_reb['Low']:.0%} · Med {_reb['Medium']:.0%} · High {_reb['High']:.0%} |
-  | **Prevented Price Increase** | Any vendor far from the TSM baseline faces **risk-sharing pressure**. Vendors *above* TSM face churn risk (we can switch to cheaper alternatives). Vendors *below* TSM are underperformers willing to share risk to retain the contract. Both accept **price protection** (long-term commitment locking current prices). Greater distance from TSM = more willingness to protect. | Low {_prot['Low']:.1%} · Med {_prot['Medium']:.1%} · High {_prot['High']:.0%} of annual spend |
-
-  > **Net margin** is estimated as Gross Margin × 0.6 (assuming ~40% SGA overhead).
-  > Prevented Price Increase uses **absolute distance** from TSM — vendors on either side contribute.
-  """)
+      inc_layer = st.radio("Layer", ["Applications", "Infrastructure"], horizontal=True, key="inc_layer")
 
       inc_df = compute_vendor_incentives(df, vi_scenario)
       if not inc_df.empty:
-          # ── B. Layer radio ──
-          inc_layer = st.radio("Layer", ["Applications", "Infrastructure"], horizontal=True, key="inc_layer")
           ldf = inc_df[inc_df["Layer"] == inc_layer].copy()
 
           if not ldf.empty:
               tsm_val = ldf["TSM_Gross"].iloc[0]
 
               # ── C. KPI row (layer-specific) ──
+              _vi_total_opp = ldf["Total_Incentive"].sum()
               k1, k2, k3, k4 = st.columns(4)
-              k1.metric("TSM Gross Margin", f"{tsm_val:.1f}%")
-              k2.metric("Total Price Negotiation", fmt(ldf["Price_Negotiation"].sum()))
-              k3.metric("Total Prevented Increase", fmt(ldf["Prevented_Increase"].sum()))
-              k4.metric("Total Combined Incentive", fmt(ldf["Total_Incentive"].sum()))
+              k1.metric("Total Opportunity", fmt(_vi_total_opp))
+              k2.metric("% of Portfolio", f"{_vi_total_opp/portfolio_total*100:.1f}%" if portfolio_total > 0 else "—")
+              k3.metric("Scenario", vi_scenario)
+              k4.metric("Optimized Spend", fmt(portfolio_total - _vi_total_opp))
+
+              st.markdown("---")
+
+              with st.expander("How Vendor Incentives Work", expanded=False):
+                  _reb = INCENTIVE_SCENARIOS[vi_scenario]
+                  _prot = CHURN_SCENARIOS[vi_scenario]
+                  st.markdown(f"""
+**How this works:** Every vendor's gross margin is benchmarked against the portfolio's
+**TSM (Total Serviceable Market) average** — the weighted mean margin per layer. Vendors
+above the TSM have pricing *headroom* that translates into two negotiation levers:
+
+| Lever | Mechanism | Tiers ({vi_scenario}) |
+|-------|-----------|-------|
+| **Price Negotiation** | Vendors above TSM have inflated pricing. The headroom gap = a negotiable rebate applied to total spend. | Low {_reb['Low']:.0%} · Med {_reb['Medium']:.0%} · High {_reb['High']:.0%} |
+| **Prevented Price Increase** | Any vendor far from the TSM baseline faces **risk-sharing pressure**. Vendors *above* TSM face churn risk (we can switch to cheaper alternatives). Vendors *below* TSM are underperformers willing to share risk to retain the contract. Both accept **price protection** (long-term commitment locking current prices). Greater distance from TSM = more willingness to protect. | Low {_prot['Low']:.1%} · Med {_prot['Medium']:.1%} · High {_prot['High']:.0%} of annual spend |
+
+> **Net margin** is estimated as Gross Margin × 0.6 (assuming ~40% SGA overhead).
+> Prevented Price Increase uses **absolute distance** from TSM — vendors on either side contribute.
+""")
+
+              st.subheader("Spend Impact: Vendor Incentives")
+              fig_vi_trend = plot_isolated_trend(spend_comp, "vi_savings", LAST_HIST_YEAR, show_proj)
+              st.plotly_chart(fig_vi_trend, use_container_width=True)
+              st.caption("Current Trend = as-is spend. Optimized = 3yr ramp of vendor incentive opportunities. Optimal = full vendor incentive opportunities applied.")
 
               st.markdown("---")
 
@@ -2975,6 +3265,14 @@ with tab_effcomp:
       if len(ai_reduction_app) == 0 and len(ai_reduction_infra) == 0:
           st.warning("AI_Reduction.xlsx not found or empty. Place the file in the same directory as the dashboard.")
       else:
+          st.markdown(f"<div style='font-size:13px; color:{MUTED}; margin-bottom:16px;'>"  # noqa
+              "AI-driven automation of operational tasks across application and infrastructure components. "
+              "Each component is assessed for automation potential across task categories. "
+              "Opportunities represent the portion of run and dev costs that can be absorbed by AI-assisted workflows."
+              "</div>", unsafe_allow_html=True)
+
+          st.radio("Layer", ["Applications", "Infrastructure"], horizontal=True, key="ai_layer")
+
           # Build historical + projected spend
           ai_hist_spend = by_year[["year", "total"]].copy()
           if show_proj:
@@ -3024,37 +3322,18 @@ with tab_effcomp:
           proj_ai_gap = ai_spend[ai_spend["year"] > LAST_HIST_YEAR]["ai_gap"].sum() if show_proj else 0
           ai_pct = total_ai_gap / portfolio_total * 100 if portfolio_total > 0 else 0
 
-          c1, c2, c3 = st.columns(3)
-          c1.metric("Total Work Modernization Opportunity", fmt(total_ai_gap), f"{ai_scenario} scenario ({ai_scale:.0%})")
-          c2.metric("Projected Work Modernization Opportunity", fmt(proj_ai_gap) if show_proj else "—",
-                    f"Next {proj_years} years" if show_proj else "Enable projections")
-          c3.metric("Work Modernization as % of Portfolio", f"{ai_pct:.1f}%", "Lifecycle cost base")
+          c1, c2, c3, c4 = st.columns(4)
+          c1.metric("Total Opportunity", fmt(total_ai_gap))
+          c2.metric("% of Portfolio", f"{total_ai_gap/portfolio_total*100:.1f}%" if portfolio_total > 0 else "—")
+          c3.metric("Scenario", f"{ai_scenario} ({ai_scale:.0%})")
+          c4.metric("Optimized Spend", fmt(portfolio_total - total_ai_gap))
 
           st.markdown("---")
 
-          # ── Chart 1: Spend with Work Modernization (line chart) ──
-          st.subheader("Spend Comparison: Current Trend vs. Modernization-Optimized vs. Modernization-Optimal")
-          st.caption("Current Trend = as-is · Modernization-Optimized = 3yr ramp (33%→66%→100%) · Modernization-Optimal = full work modernization opportunities applied")
-
-          ai_plot = ai_spend[ai_spend["year"] >= 2020]
-
-          fig_ai = go.Figure()
-          fig_ai.add_trace(go.Scatter(x=ai_plot["year"], y=ai_plot["current_trend"], name="Current Trend",
-              line=dict(color="#dc2626", width=2.5), mode="lines"))
-          fig_ai.add_trace(go.Scatter(x=ai_plot["year"], y=ai_plot["ai_optimized"], name="AI-Optimized",
-              line=dict(color="#0891b2", width=2.5, dash="dash"), mode="lines",
-              fill="tonexty", fillcolor="rgba(8,145,178,0.12)"))
-          fig_ai.add_trace(go.Scatter(x=ai_plot["year"], y=ai_plot["ai_optimal"], name="AI-Optimal",
-              line=dict(color="#059669", width=2), mode="lines",
-              fill="tonexty", fillcolor="rgba(5,150,105,0.12)"))
-
-          if show_proj:
-              fig_ai.add_vline(x=LAST_HIST_YEAR, line_dash="dash", line_color=MUTED,
-                  annotation_text="Projected →", annotation_font_color=MUTED, annotation_font_size=10)
-          dark_layout(fig_ai, 420)
-          fig_ai.update_layout(yaxis_title="Annual Spend")
-          st.plotly_chart(fig_ai, use_container_width=True)
-          st.caption("Cyan fill = AI-optimized opportunity (3yr ramp) · Green fill = additional AI-optimal opportunity")
+          st.subheader("Spend Impact: Work Modernization")
+          fig_ai_trend = plot_isolated_trend(spend_comp, "ai_savings", LAST_HIST_YEAR, show_proj)
+          st.plotly_chart(fig_ai_trend, use_container_width=True)
+          st.caption("Current Trend = as-is spend. Optimized = 3yr ramp of work modernization opportunities. Optimal = full work modernization opportunities applied.")
 
           st.markdown("---")
 
@@ -3135,9 +3414,11 @@ with tab_effcomp:
 
   # ── Vendor Incentives (Benchmarks) ──
   with tab_bench_opp:
-    st.subheader("Vendor Incentives — Benchmark Opportunities")
-    st.caption("Identifies optimization opportunities by comparing actual org spend "
-               "to external market benchmark rates per worktype.")
+    st.markdown(f"<div style='font-size:13px; color:{MUTED}; margin-bottom:16px;'>"
+        "Identifies optimization opportunities by comparing actual org spend "
+        "to external market benchmark rates per worktype. Worktypes with available market data are "
+        "benchmarked against the average and top performer rates to quantify repricing potential."
+        "</div>", unsafe_allow_html=True)
 
     bo_layer = st.radio("Layer", ["Applications", "Infrastructure"], horizontal=True, key="bo_layer")
 
@@ -3250,11 +3531,10 @@ with tab_effcomp:
         _bo_total_opp_top = bo["Opp vs Top"].sum()
         _bo_pct_avg = (_bo_total_opp_avg / _bo_total_actual * 100) if _bo_total_actual > 0 else 0
         _s1, _s2, _s3, _s4 = st.columns(4)
-        _s1.metric("Total Actual Spend", fmt(_bo_total_actual))
-        _s2.metric("Opportunity vs Mkt Avg", fmt(_bo_total_opp_avg),
-                    delta=f"{_bo_pct_avg:.1f}%")
-        _s3.metric("Opportunity vs Mkt Top", fmt(_bo_total_opp_top))
-        _s4.metric("Worktypes with Data", len(bo))
+        _s1.metric("Total Opportunity", fmt(_bo_total_opp_avg))
+        _s2.metric("% of Portfolio", f"{_bo_total_opp_avg/portfolio_total*100:.1f}%" if portfolio_total > 0 else "—")
+        _s3.metric("Scenario", f"vs Market Avg")
+        _s4.metric("Optimized Spend", fmt(portfolio_total - _bo_total_opp_avg))
 
         # ── Opportunity $ by worktype ──
         st.markdown("### Opportunity by Worktype")
