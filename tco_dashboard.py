@@ -1168,21 +1168,15 @@ app_bench, infra_bench = load_benchmarks(bench_path) if bench_path.exists() else
 # SIDEBAR
 # ══════════════════════════
 # ── Projections ──
-if "proj_toggle" not in st.session_state:
-    st.session_state["proj_toggle"] = True
-if "proj_noise" not in st.session_state:
-    st.session_state["proj_noise"] = 0.05
-if "proj_years" not in st.session_state:
-    st.session_state["proj_years"] = 5
 _proj_label = "Off"
-if st.session_state["proj_toggle"]:
-    _proj_label = f'{st.session_state["proj_years"]}yr'
+if st.session_state.get("proj_toggle", True):
+    _proj_label = f'{st.session_state.get("proj_years", 5)}yr'
 with st.sidebar.expander(f"⚙️ Projections\n{_proj_label}", expanded=False):
     st.caption(f"Projections start on: **{LAST_HIST_YEAR + 1}** (last data year: {LAST_HIST_YEAR})")
-    st.toggle("Enable Projections", value=st.session_state["proj_toggle"], key="proj_toggle")
+    st.toggle("Enable Projections", value=True, key="proj_toggle")
     if st.session_state["proj_toggle"]:
-        st.slider("Noise Level", 0.0, 0.20, st.session_state["proj_noise"], 0.01, key="proj_noise")
-        st.slider("Projection Years", 1, 10, st.session_state["proj_years"], key="proj_years")
+        st.slider("Noise Level", 0.0, 0.20, 0.05, 0.01, key="proj_noise")
+        st.slider("Projection Years", 1, 10, 5, key="proj_years")
 show_proj = st.session_state["proj_toggle"]
 noise = st.session_state["proj_noise"]
 proj_years = st.session_state["proj_years"]
@@ -1590,19 +1584,25 @@ spend_comp["total_savings"] = spend_comp["savings"] + spend_comp["ep_savings"] +
 spend_comp["current_trend"] = spend_comp["total"]
 spend_comp["optimal"] = (spend_comp["total"] - spend_comp["total_savings"]).clip(lower=0)
 
-def optimized_ramp(row):
+# Add deterministic noise to optimal (projected years only) so curves look organic
+_opt_rng = np.random.default_rng(42)
+_opt_noise = spend_comp["year"].apply(
+    lambda y: _opt_rng.uniform(0.92, 1.08) if y > LAST_HIST_YEAR else 1.0)
+spend_comp["optimal"] = (spend_comp["optimal"] * _opt_noise).clip(lower=0)
+
+def optimized_blend(row):
     yr = row["year"]
     if yr <= LAST_HIST_YEAR:
-        return 0
+        return row["total"]
     offset = yr - LAST_HIST_YEAR
     if offset == 1:
-        return row["total_savings"] * 0.33
+        return row["total"] * 0.67 + row["optimal"] * 0.33
     elif offset == 2:
-        return row["total_savings"] * 0.66
+        return row["total"] * 0.34 + row["optimal"] * 0.66
     else:
-        return row["total_savings"]
+        return row["optimal"]
 
-spend_comp["optimized"] = (spend_comp["total"] - spend_comp.apply(optimized_ramp, axis=1)).clip(lower=0)
+spend_comp["optimized"] = spend_comp.apply(optimized_blend, axis=1).clip(lower=0)
 
 # ══════════════════════════
 # TABS
@@ -3019,7 +3019,7 @@ with tab_effcomp:
           c1, c2, c3, c4 = st.columns(4)
           c1.metric("Total Opportunity", fmt(ep_net))
           c2.metric("% of Portfolio", f"{ep_net/portfolio_total*100:.1f}%" if portfolio_total > 0 else "—")
-          c3.metric("Scenario", f"{ep_preset} ({ep_fine_tune:+d}% tune)")
+          c3.metric("Scenario", ep_preset)
           c4.metric("Optimized Spend", fmt(portfolio_total - ep_net))
 
           st.markdown("---")
@@ -3318,14 +3318,14 @@ above the TSM have pricing *headroom* that translates into two negotiation lever
           ai_spend["ai_optimized"] = (ai_spend["total"] - ai_spend.apply(ai_optimized_ramp, axis=1)).clip(lower=0)
 
           # ── Metric cards ──
-          total_ai_gap = ai_spend["ai_gap"].sum()
-          proj_ai_gap = ai_spend[ai_spend["year"] > LAST_HIST_YEAR]["ai_gap"].sum() if show_proj else 0
+          _ai_last = ai_spend[ai_spend["year"] == LAST_HIST_YEAR]["ai_gap"].sum()
+          total_ai_gap = _ai_last
           ai_pct = total_ai_gap / portfolio_total * 100 if portfolio_total > 0 else 0
 
           c1, c2, c3, c4 = st.columns(4)
           c1.metric("Total Opportunity", fmt(total_ai_gap))
           c2.metric("% of Portfolio", f"{total_ai_gap/portfolio_total*100:.1f}%" if portfolio_total > 0 else "—")
-          c3.metric("Scenario", f"{ai_scenario} ({ai_scale:.0%})")
+          c3.metric("Scenario", ai_scenario)
           c4.metric("Optimized Spend", fmt(portfolio_total - total_ai_gap))
 
           st.markdown("---")
